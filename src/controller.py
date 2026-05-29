@@ -54,9 +54,12 @@ class AutonomicController:
 
     # ------------- MONITOR -------------
     def monitor(self, cluster: Cluster, dag_makespan: float, locality_rate: float, now: float):
+        # Use per-node total-load CV (the metric the operator actually cares about)
+        # rather than rolling task-duration CV (which conflates speed heterogeneity
+        # with imbalance).
         sample = Sample(
             t=now,
-            imbalance=cluster.rolling_imbalance(),
+            imbalance=cluster.load_imbalance(),
             locality_rate=locality_rate,
             throughput=1.0 / max(dag_makespan, 1e-3),
             makespan_window=dag_makespan,

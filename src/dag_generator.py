@@ -215,6 +215,7 @@ class WorkflowStream:
     n_proc: int
     seed: int = 0
     mix: Tuple[float, float, float] = (0.5, 0.3, 0.2)   # MR, ETL, Random
+    scale_range: Tuple[float, float] = (0.5, 2.0)
 
     def __iter__(self) -> Iterator[DataDAG]:
         rng = random.Random(self.seed)
@@ -224,28 +225,108 @@ class WorkflowStream:
             t += rng.expovariate(self.arrival_rate)
             if t >= self.horizon:
                 return
+            scale = rng.uniform(*self.scale_range)
             r = rng.random()
             if r < self.mix[0]:
                 d = generate_mapreduce_dag(
                     f"job{idx:04d}", n_mappers=rng.randint(2, 5),
                     n_reducers=rng.randint(2, 4),
-                    scale=rng.uniform(0.5, 2.0),
+                    scale=scale,
                     n_proc=self.n_proc, beta=0.4, seed=self.seed + idx,
                 )
             elif r < self.mix[0] + self.mix[1]:
                 d = generate_etl_dag(
                     f"job{idx:04d}", n_stages=rng.randint(2, 4),
                     fanout=rng.randint(2, 4),
-                    scale=rng.uniform(0.5, 2.0),
+                    scale=scale,
                     n_proc=self.n_proc, beta=0.4, seed=self.seed + idx,
                 )
             else:
                 d = generate_random_dag(
                     f"job{idx:04d}", n_tasks=rng.randint(8, 16),
                     edge_p=0.3,
-                    scale=rng.uniform(0.5, 2.0),
+                    scale=scale,
                     n_proc=self.n_proc, beta=0.4, seed=self.seed + idx,
                 )
             d.arrival_time = t
+            idx += 1
+            yield d
+
+
+@dataclass
+class ShiftStream:
+    """
+    Non-stationary stream with three phases simulating a realistic day
+    in a multi-tenant data platform:
+
+      phase 1 (0..t1)      : light, mostly random small DAGs
+      phase 2 (t1..t2)     : heavy ETL burst (high arrival rate, large scale)
+      phase 3 (t2..horizon): MapReduce dominates, moderate load
+
+    The right (epsilon, locality_weight) values differ per phase. A static
+    scheduler picks one and is wrong for two-thirds of the run; the
+    autonomic controller adapts.
+    """
+    horizon: float
+    n_proc: int
+    seed: int = 0
+    t1: float = 0.0
+    t2: float = 0.0
+
+    def __post_init__(self):
+        if self.t1 == 0.0:
+            self.t1 = self.horizon / 3
+        if self.t2 == 0.0:
+            self.t2 = 2 * self.horizon / 3
+
+    def __iter__(self) -> Iterator[DataDAG]:
+        rng = random.Random(self.seed)
+        t = 0.0
+        idx = 0
+        while t < self.horizon:
+            if t < self.t1:
+                rate = 0.06
+                scale_lo, scale_hi = 0.3, 0.7
+                mix = (0.2, 0.2, 0.6)
+                phase = "light"
+            elif t < self.t2:
+                rate = 0.30
+                scale_lo, scale_hi = 1.2, 2.5
+                mix = (0.2, 0.7, 0.1)
+                phase = "burst"
+            else:
+                rate = 0.15
+                scale_lo, scale_hi = 0.6, 1.4
+                mix = (0.7, 0.2, 0.1)
+                phase = "mr"
+
+            t += rng.expovariate(rate)
+            if t >= self.horizon:
+                return
+            scale = rng.uniform(scale_lo, scale_hi)
+            r = rng.random()
+            if r < mix[0]:
+                d = generate_mapreduce_dag(
+                    f"job{idx:04d}", n_mappers=rng.randint(2, 5),
+                    n_reducers=rng.randint(2, 4),
+                    scale=scale, n_proc=self.n_proc, beta=0.4,
+                    seed=self.seed + idx,
+                )
+            elif r < mix[0] + mix[1]:
+                d = generate_etl_dag(
+                    f"job{idx:04d}", n_stages=rng.randint(2, 4),
+                    fanout=rng.randint(2, 4),
+                    scale=scale, n_proc=self.n_proc, beta=0.4,
+                    seed=self.seed + idx,
+                )
+            else:
+                d = generate_random_dag(
+                    f"job{idx:04d}", n_tasks=rng.randint(8, 16),
+                    edge_p=0.3, scale=scale, n_proc=self.n_proc, beta=0.4,
+                    seed=self.seed + idx,
+                )
+            d.arrival_time = t
+            # tag for downstream analysis
+            d.phase = phase  # type: ignore[attr-defined]
             idx += 1
             yield d

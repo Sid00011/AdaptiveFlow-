@@ -34,6 +34,7 @@ class DAGResult:
     locality_rate: float
     epsilon_in_effect: float
     scheduler: str
+    phase: str = ""
 
 
 @dataclass
@@ -97,6 +98,7 @@ def simulate(
             locality_rate=loc,
             epsilon_in_effect=eps,
             scheduler=scheduler.name,
+            phase=getattr(dag, "phase", ""),
         )
         report.results.append(result)
 
