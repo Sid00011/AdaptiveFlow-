@@ -167,6 +167,42 @@ def fig5_rl_learning_curve():
     save(fig, "fig5_rl_learning_curve")
 
 
+def fig7_shift_timeline():
+    """Time-series of epsilon and makespan during a non-stationary stream."""
+    st = pd.read_csv(DATA / "shift_timeline.csv")
+    if st.empty:
+        return
+    sub = st[(st.cluster == "skewed_8") & (st.seed == 1)].copy()
+
+    fig, axes = plt.subplots(2, 1, figsize=(9, 5.5), sharex=True)
+
+    # Top: epsilon trajectory for the autonomic config
+    ax = axes[0]
+    for sched, color in [("HEFT", "#9467bd"), ("HEFT-LC", "#888888"), ("HEFT-LC+ctrl", "#d62728")]:
+        s = sub[sub.scheduler == sched].sort_values("arrival")
+        ax.step(s["arrival"], s["epsilon"], where="post", label=sched,
+                color=color, linewidth=1.6)
+    # phase shading
+    ax.axvspan(0, 300, alpha=0.08, color="green", label="light")
+    ax.axvspan(300, 600, alpha=0.10, color="red", label="burst")
+    ax.axvspan(600, 900, alpha=0.08, color="blue", label="mr")
+    ax.set_ylabel(r"$\varepsilon$ in effect")
+    ax.set_title("Online ε adaptation across workload phases")
+    ax.legend(loc="upper right", fontsize=8, ncol=2)
+
+    # Bottom: smoothed makespan per scheduler
+    ax = axes[1]
+    for sched, color in [("HEFT", "#9467bd"), ("HEFT-LC", "#888888"), ("HEFT-LC+ctrl", "#d62728")]:
+        s = sub[sub.scheduler == sched].sort_values("arrival")
+        smooth = s["makespan"].rolling(8, min_periods=1).mean()
+        ax.plot(s["arrival"], smooth, label=sched, color=color, alpha=0.9, linewidth=1.4)
+    ax.set_xlabel("Simulated time (s)")
+    ax.set_ylabel("Per-DAG makespan (smoothed)")
+    ax.set_title("Per-DAG makespan over the non-stationary stream")
+    ax.legend(loc="upper right", fontsize=9)
+    save(fig, "fig7_shift_timeline")
+
+
 def fig6_pareto():
     df = pd.read_csv(DATA / "results.csv")
     a = df[df.scenario == "A_compare"].copy()
@@ -207,6 +243,7 @@ def main():
     fig4_adaptation_trace()
     fig5_rl_learning_curve()
     fig6_pareto()
+    fig7_shift_timeline()
     summary_table()
     print(f"\nAll figures saved to {FIG}")
 

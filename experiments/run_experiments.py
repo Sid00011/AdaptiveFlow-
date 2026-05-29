@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from cluster import ClusterFactory
 from controller import AutonomicController, ControllerConfig
-from dag_generator import WorkflowStream
+from dag_generator import ShiftStream, WorkflowStream
 from rl_agent import QLearningAgent
 from schedulers import DLS, HEFTLC, RLScheduler
 from simulator import simulate
@@ -33,6 +33,7 @@ DATA.mkdir(exist_ok=True)
 OUT = DATA / "results.csv"
 LEARN = DATA / "learning_curve.csv"
 ADAPT = DATA / "adaptations.csv"
+SHIFT = DATA / "shift_timeline.csv"
 
 
 def cluster_for(name: str, seed: int):
@@ -238,6 +239,80 @@ def run_scenario_E_learning(learn_writer):
         print(f"  seed {seed}: final eps={agent.epsilon:.3f}, Q states={len(agent.q)}")
 
 
+def run_scenario_F_shift(writer, shift_writer):
+    """
+    Non-stationary workload (light → burst → MapReduce phases).
+    Compare:
+      - vanilla HEFT  (epsilon = 0,    no load-aware balancing)
+      - HEFT-LC      (epsilon = 0.05,  static load-aware)
+      - HEFT-LC+ctrl (epsilon adapts via MAPE-K)
+
+    Writes per-DAG timeline so we can plot epsilon over time.
+    """
+    print("[F] non-stationary workload (shift)")
+    configs = [
+        ("HEFT", 0.0, False),
+        ("HEFT-LC", 0.05, False),
+        ("HEFT-LC+ctrl", 0.05, True),
+    ]
+    seeds = [1, 2, 3, 4, 5]
+
+    for cluster_name in ["skewed_8", "cpu_gpu"]:
+        for label, eps0, use_ctrl in configs:
+            for seed in seeds:
+                cluster = cluster_for(cluster_name, seed)
+                scheduler = HEFTLC(epsilon=eps0)
+                controller = None
+                if use_ctrl:
+                    controller = AutonomicController(
+                        scheduler,
+                        ControllerConfig(
+                            window_size=8,
+                            target_imbalance=0.15,
+                            epsilon_step=0.03,
+                            epsilon_min=0.0,
+                            epsilon_max=0.25,
+                            cooldown_episodes=2,
+                        ),
+                    )
+                stream = ShiftStream(horizon=900.0, n_proc=cluster.n, seed=seed)
+                report = simulate(stream, cluster, scheduler,
+                                  controller=controller, seed=seed)
+                if not report.results:
+                    continue
+                writer.writerow({
+                    "scenario": "F_shift",
+                    "scheduler": label,
+                    "cluster": cluster_name,
+                    "arrival_rate": -1,
+                    "failure_rate": 0.0,
+                    "controller": "on" if use_ctrl else "off",
+                    "seed": seed,
+                    "n_dags": len(report.results),
+                    "mean_makespan": report.mean_makespan(),
+                    "mean_imbalance": report.mean_imbalance(),
+                    "mean_locality": report.mean_locality(),
+                    "throughput": report.throughput(900.0),
+                    "n_failures": 0,
+                    "n_adaptations": len(report.adaptations),
+                    "wall_seconds": 0.0,
+                })
+                # per-phase breakdown for one representative seed
+                if seed == 1:
+                    for r in report.results:
+                        shift_writer.writerow({
+                            "cluster": cluster_name,
+                            "scheduler": label,
+                            "seed": seed,
+                            "arrival": r.arrival,
+                            "phase": r.phase,
+                            "makespan": r.makespan,
+                            "imbalance": r.imbalance_after,
+                            "epsilon": r.epsilon_in_effect,
+                            "locality": r.locality_rate,
+                        })
+
+
 def main():
     fieldnames = [
         "scenario", "scheduler", "cluster", "arrival_rate", "failure_rate",
@@ -245,22 +320,28 @@ def main():
         "mean_makespan", "mean_imbalance", "mean_locality",
         "throughput", "n_failures", "n_adaptations", "wall_seconds",
     ]
+    shift_fields = ["cluster", "scheduler", "seed", "arrival", "phase",
+                    "makespan", "imbalance", "epsilon", "locality"]
     with OUT.open("w", newline="") as f, \
          ADAPT.open("w", newline="") as fa, \
-         LEARN.open("w", newline="") as fl:
+         LEARN.open("w", newline="") as fl, \
+         SHIFT.open("w", newline="") as fs:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
         wa = csv.DictWriter(fa, fieldnames=["cluster", "seed", "time", "action"])
         wa.writeheader()
         wl = csv.DictWriter(fl, fieldnames=["seed", "episode", "makespan", "baseline", "ratio", "locality", "epsilon"])
         wl.writeheader()
+        ws = csv.DictWriter(fs, fieldnames=shift_fields)
+        ws.writeheader()
 
         run_scenario_A_B(w)
         run_scenario_C_failures(w)
         run_scenario_D_autonomic(w, wa)
         run_scenario_E_learning(wl)
+        run_scenario_F_shift(w, ws)
 
-    print(f"\nWrote {OUT}, {ADAPT}, {LEARN}")
+    print(f"\nWrote {OUT}, {ADAPT}, {LEARN}, {SHIFT}")
 
 
 if __name__ == "__main__":
