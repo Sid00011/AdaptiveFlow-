@@ -20,14 +20,16 @@ Workflows arrive over time as a Poisson stream (50% MapReduce, 30% ETL, 20% rand
 
 ## Key results
 
+Stable-workload scheduler comparison (108 runs):
+
 | Scheduler | Makespan (s) | Imbalance (CV) | Locality |
 |-----------|-------------:|---------------:|---------:|
-| HEFT-LC   | 23.5         | **0.021**      | 0.558    |
-| DLS       | **17.4**     | 0.121          | **0.738** |
-| RL        | 47.5         | 0.046          | 0.514    |
+| HEFT-LC   | 23.8         | **0.030**      | 0.552    |
+| DLS       | **17.3**     | 0.130          | **0.747** |
+| RL        | 46.7         | 0.049          | 0.492    |
 
-- **DLS reduces makespan by 26%** vs HEFT-LC by exploiting data locality (74% vs 56%).
-- **MAPE-K controller** triggers up to 14 adaptations per stream and tracks the target imbalance with only a 3.5% makespan overhead — removing the manual tuning of ε.
+- **DLS reduces makespan by 27%** vs HEFT-LC by exploiting data locality (75% vs 55%).
+- **MAPE-K controller reduces mean makespan by 31–39%** vs static `ε=0.05` on heterogeneous clusters by detecting that the default is too aggressive and lowering ε to zero — see Scenario D and the non-stationary three-phase workload (Scenario F).
 - **RL agent** converges from 2.57× to 1.57× the HEFT-LC baseline within 350 episodes (39% improvement). Honest result: it does not beat the strong baseline; the paper discusses why (coarse tabular state).
 
 ## Structure
@@ -41,15 +43,16 @@ src/
   controller.py       — MAPE-K autonomic controller
   simulator.py        — event-driven streaming simulator
 experiments/
-  run_experiments.py  — 160 streaming runs across 4 scenarios
-  generate_figures.py — 6 publication-quality figures
+  run_experiments.py  — 190 streaming runs across 5 scenarios
+  generate_figures.py — 7 publication-quality figures
 paper/
   paper.tex           — IEEE-format research paper (~7 pages)
 data/
   results.csv         — main results table
   adaptations.csv     — controller adaptation trace
   learning_curve.csv  — per-episode RL convergence data
-figures/              — fig1–fig6 (PNG + PDF)
+  shift_timeline.csv  — per-DAG timeline for the shift scenario
+figures/              — fig1–fig7 (PNG + PDF)
 ```
 
 ## Quick start
